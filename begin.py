@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
+from tqdm import tqdm
 
 class TradingStrategy:
     def __init__(self, stop_loss=0.07, take_profit=0.15):
@@ -85,6 +86,8 @@ class TradingStrategy:
 class StockDataFetcher:
     def __init__(self):
         self.stock_list = None
+        # 添加缓存
+        self.data_cache = {}
         
     def get_stock_list(self):
         """获取A股股票列表"""
@@ -110,6 +113,11 @@ class StockDataFetcher:
 
     def get_stock_data(self, stock_code, start_date, end_date):
         """获取单个股票的历史数据"""
+        # 使用缓存键
+        cache_key = f"{stock_code}_{start_date}_{end_date}"
+        if cache_key in self.data_cache:
+            return self.data_cache[cache_key]
+            
         try:
             # 获取股票日线数据
             df = ak.stock_zh_a_hist(symbol=stock_code, 
@@ -131,6 +139,8 @@ class StockDataFetcher:
             df['date'] = pd.to_datetime(df['date'])
             df.set_index('date', inplace=True)
             
+            # 存入缓存
+            self.data_cache[cache_key] = df
             return df
         except Exception as e:
             print(f"获取股票{stock_code}数据失败: {e}")
@@ -188,31 +198,22 @@ def main():
     
     print("开始筛选股票...")
     
-    # 遍历股票列表
-    for _, row in stock_list.iterrows():
-        stock_code = row['code']
-        stock_name = row['name']
-        market_value = row['market_value']
+    # 使用多线程处理股票分析
+    def process_stock(stock_info):
+        stock_code, stock_name, market_value = stock_info
         
-        print(f"正在分析: {stock_code} {stock_name} 市值:{market_value:.2f}亿")
-        
-        # 获取股票数据
         stock_data = fetcher.get_stock_data(stock_code, start_date, end_date)
         
-        # 股票筛选
         if not screener.screen_stocks(stock_data, market_value, stock_code):
-            print(f"股票{stock_code}未通过筛选条件")
-            continue
+            return None
             
-        # 运行策略
         try:
             result_df = strategy.backtest(stock_data)
-            
-            # 检查最新信号
             latest_signal = result_df['signal'].iloc[-1]
             
-            if latest_signal != 0:  # 如果有买入或卖出信号
-                trading_opportunities[stock_code] = {
+            if latest_signal != 0:
+                return {
+                    'code': stock_code,
                     'name': stock_name,
                     'signal': '买入' if latest_signal == 1 else '卖出',
                     'price': result_df['close'].iloc[-1],
@@ -222,8 +223,23 @@ def main():
                 }
         except Exception as e:
             print(f"分析股票{stock_code}时出错: {e}")
-            continue
+        return None
+
+    # 创建股票信息列表
+    stock_info_list = [(row['code'], row['name'], row['market_value']) 
+                       for _, row in stock_list.iterrows()]
     
+    # 使用tqdm包装线程池的执行过程
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        results = list(tqdm(
+            executor.map(process_stock, stock_info_list),
+            total=len(stock_info_list),
+            desc="股票分析进度"
+        ))
+    
+    # 过滤掉None结果并转换为字典
+    trading_opportunities = {r['code']: r for r in results if r is not None}
+
     # 输出交易机会
     print("\n=== 交易信号汇总 ===")
     print("代码  名称  信号  价格  市值(亿)  日成交额(亿)")
