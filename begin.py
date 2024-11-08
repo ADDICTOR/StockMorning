@@ -2,6 +2,7 @@ import akshare as ak
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
 
 class TradingStrategy:
     def __init__(self, stop_loss=0.07, take_profit=0.15):
@@ -88,11 +89,13 @@ class StockDataFetcher:
     def get_stock_list(self):
         """获取A股股票列表"""
         try:
-            # 获取A股所有股票的代码和名称
-            stock_info = ak.stock_info_a_code_name()
-            
-            # 获取实时行情数据（包含市值信息）
-            stock_real_time = ak.stock_zh_a_spot_em()
+            # 使用并行处理来提高性能
+            with ThreadPoolExecutor() as executor:
+                stock_info_future = executor.submit(ak.stock_info_a_code_name)
+                stock_real_time_future = executor.submit(ak.stock_zh_a_spot_em)
+                
+                stock_info = stock_info_future.result()
+                stock_real_time = stock_real_time_future.result()
             
             # 提取需要的字段
             market_value_df = stock_real_time[['代码', '总市值']]
@@ -143,12 +146,16 @@ class StockScreener:
         self.min_amount = min_amount
         self.min_market_value = min_market_value
         
-    def screen_stocks(self, stock_data, market_value):
+    def screen_stocks(self, stock_data, market_value, stock_code):
         """基础股票筛选"""
         if stock_data is None or stock_data.empty:
             return False
             
         try:
+            # 排除科创板股票
+            if stock_code.startswith('688'):
+                return False
+                
             # 检查市值条件（单位：亿元转换为元）
             if market_value * 100000000 < self.min_market_value:
                 return False
@@ -193,7 +200,7 @@ def main():
         stock_data = fetcher.get_stock_data(stock_code, start_date, end_date)
         
         # 股票筛选
-        if not screener.screen_stocks(stock_data, market_value):
+        if not screener.screen_stocks(stock_data, market_value, stock_code):
             print(f"股票{stock_code}未通过筛选条件")
             continue
             
