@@ -26,27 +26,35 @@ class TradingStrategy:
     
     def generate_signals(self, df):
         """生成交易信号"""
-        df['signal'] = 0  # 0表示持有，1表示买入，-1表示卖出
+        df['signal'] = 0  # 0表示无信号，1表示买入
         
         # 趋势跟踪信号
         df['MA5_cross_MA20'] = (df['MA5'] > df['MA20']) & (df['MA5'].shift(1) <= df['MA20'].shift(1))
-        df['MA5_cross_MA20_down'] = (df['MA5'] < df['MA20']) & (df['MA5'].shift(1) >= df['MA20'].shift(1))
         
         # 布林带信号
         df['price_below_lower'] = df['close'] < df['BB_lower']
-        df['price_above_upper'] = df['close'] > df['BB_upper']
         
-        # 综合信号
+        # 添加信号原因说明
+        df['signal_reason'] = ''
+        
+        # 生成买入信号
         for i in range(1, len(df)):
-            # 买入信号
-            if (df['MA5_cross_MA20'].iloc[i] and df['close'].iloc[i] > df['MA20'].iloc[i]) or \
-               df['price_below_lower'].iloc[i]:
+            # 同时满足两个条件
+            if (df['MA5_cross_MA20'].iloc[i] and 
+                df['close'].iloc[i] > df['MA20'].iloc[i] and 
+                df['price_below_lower'].iloc[i]):
+                df.loc[df.index[i], 'signal'] = 2  # 使用2表示同时满足两个条件
+                df.loc[df.index[i], 'signal_reason'] = 'MA5上穿MA20且价格在MA20上方，同时触及布林带下轨'
+            
+            # 满足MA5上穿MA20
+            elif (df['MA5_cross_MA20'].iloc[i] and df['close'].iloc[i] > df['MA20'].iloc[i]):
                 df.loc[df.index[i], 'signal'] = 1
-                
-            # 卖出信号
-            elif (df['MA5_cross_MA20_down'].iloc[i] and df['close'].iloc[i] < df['MA20'].iloc[i]) or \
-                 df['price_above_upper'].iloc[i]:
-                df.loc[df.index[i], 'signal'] = -1
+                df.loc[df.index[i], 'signal_reason'] = 'MA5上穿MA20，且价格在MA20上方'
+            
+            # 满足布林带下轨
+            elif df['price_below_lower'].iloc[i]:
+                df.loc[df.index[i], 'signal'] = 1
+                df.loc[df.index[i], 'signal_reason'] = '价格触及布林带下轨'
         
         return df
     
@@ -60,11 +68,13 @@ class TradingStrategy:
                 loss_pct = (current_price - entry_price) / entry_price
                 if loss_pct < -self.stop_loss:
                     df.loc[df.index[i], 'signal'] = -1
+                    df.loc[df.index[i], 'signal_reason'] = f'触发止损（亏损超过{self.stop_loss*100}%）'
                     entry_price = None
                 
                 # 检查止盈
                 elif loss_pct > self.take_profit:
                     df.loc[df.index[i], 'signal'] = -1
+                    df.loc[df.index[i], 'signal_reason'] = f'触发止盈（盈利超过{self.take_profit*100}%）'
                     entry_price = None
             
             # 更新入场价格
@@ -150,7 +160,7 @@ class StockScreener:
     def __init__(self, min_amount=200000000, min_market_value=20000000000):
         """
         初始化筛选器
-        :param min_amount: 最小日成交额（元），默认2亿
+        :param min_amount: 最小日成交（元），默认2亿
         :param min_market_value: 最小市值（元），默认200亿
         """
         self.min_amount = min_amount
@@ -163,7 +173,7 @@ class StockScreener:
             
         try:
             # 排除科创板股票
-            if stock_code.startswith('688'):
+            if stock_code.startswith('688') or stock_code.startswith('300'):
                 return False
                 
             # 检查市值条件（单位：亿元转换为元）
@@ -181,6 +191,10 @@ class StockScreener:
             return False
 
 def main():
+    # 记录开始时间
+    start_time = datetime.now()
+    print(f"程序开始运行时间: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    
     # 初始化数据获取器和交易策略
     fetcher = StockDataFetcher()
     strategy = TradingStrategy(stop_loss=0.07, take_profit=0.15)
@@ -211,15 +225,19 @@ def main():
             result_df = strategy.backtest(stock_data)
             latest_signal = result_df['signal'].iloc[-1]
             
-            if latest_signal != 0:
+            # 返回所有买入信号（包括同时满足两个条件的信号）
+            if latest_signal >= 1:
+                signal_strength = "同时满足双重买入条件" if latest_signal == 2 else "买入"
                 return {
                     'code': stock_code,
                     'name': stock_name,
-                    'signal': '买入' if latest_signal == 1 else '卖出',
+                    'signal': signal_strength,
                     'price': result_df['close'].iloc[-1],
                     'date': result_df.index[-1],
                     'market_value': market_value,
-                    'daily_amount': stock_data['amount'].iloc[-1]
+                    'daily_amount': stock_data['amount'].iloc[-1],
+                    'reason': result_df['signal_reason'].iloc[-1],
+                    'signal_strength': latest_signal  # 添加信号强度
                 }
         except Exception as e:
             print(f"分析股票{stock_code}时出错: {e}")
@@ -240,20 +258,57 @@ def main():
     # 过滤掉None结果并转换为字典
     trading_opportunities = {r['code']: r for r in results if r is not None}
 
+    # 在结果输出之前记录结束时间
+    end_time = datetime.now()
+    run_duration = end_time - start_time
+    
     # 输出交易机会
-    print("\n=== 交易信号汇总 ===")
-    print("代码  名称  信号  价格  市值(亿)  日成交额(亿)")
-    print("-" * 50)
+    print("\n=== 买入信号汇总 ===")
+    print(f"运行时间: {run_duration}")
+    print("代码  名称  信号强度  价格  市值(亿)  日成交额(亿)  买入理由")
+    print("-" * 100)
+
+    # 先输出同时满足两个条件的股票
+    print("\n*** 同时满足双重买入条件的股票 ***")
     for code, info in trading_opportunities.items():
-        print(f"{code} {info['name']} {info['signal']} "
-              f"{info['price']:.2f} {info['market_value']:.2f} "
-              f"{info['daily_amount']/100000000:.2f}")
+        if info['signal_strength'] == 2:
+            print(f"{code} {info['name']} {info['signal']} "
+                  f"{info['price']:.2f} {info['market_value']:.2f} "
+                  f"{info['daily_amount']/100000000:.2f} "
+                  f"{info['reason']}")
+
+    # 再输出满足单个条件的股票
+    print("\n*** 满足单个买入条件的股票 ***")
+    for code, info in trading_opportunities.items():
+        if info['signal_strength'] == 1:
+            print(f"{code} {info['name']} {info['signal']} "
+                  f"{info['price']:.2f} {info['market_value']:.2f} "
+                  f"{info['daily_amount']/100000000:.2f} "
+                  f"{info['reason']}")
 
     # 保存结果到CSV文件
     if trading_opportunities:
-        df_opportunities = pd.DataFrame.from_dict(trading_opportunities, orient='index')
-        df_opportunities.to_csv(f'trading_signals_{datetime.now().strftime("%Y%m%d")}.csv')
-        print(f"\n结果已保存到: trading_signals_{datetime.now().strftime('%Y%m%d')}.csv")
+        current_date = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f'trading_signals_{current_date}.csv'
+        
+        # 创建DataFrame并只包含需要的列
+        df_opportunities = pd.DataFrame([
+            {
+                '代码': info['code'],
+                '名称': info['name'],
+                '信号强度': info['signal'],
+                '当前价格': info['price'],
+                '市值(亿)': info['market_value'],
+                '日成交额(亿)': info['daily_amount']/100000000,
+                '买入理由': info['reason']
+            }
+            for info in trading_opportunities.values()
+        ])
+        
+        # 保存为CSV文件
+        df_opportunities.to_csv(filename, index=False, encoding='utf-8-sig')
+        print(f"\n结果已保存到: {filename}")
+        print(f"总运行时间: {run_duration}")
 
 if __name__ == "__main__":
     main()
