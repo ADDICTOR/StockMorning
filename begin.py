@@ -6,91 +6,215 @@ from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 
 class TradingStrategy:
-    def __init__(self, stop_loss=0.07, take_profit=0.15):
-        self.stop_loss = stop_loss  # 止损位，默认7%
-        self.take_profit = take_profit  # 止盈位，默认15%
+    def __init__(self):
+        # 重新分配权重，总和保持为1
+        self.weights = {
+            'ma_cross': 0.15,    # MA交叉是较为可靠的趋势指标
+            'bollinger': 0.15,   # 布林带在市场波动中表现稳定
+            'rsi': 0.1,         # RSI作为超买超卖指标
+            'macd': 0.15,       # MACD作为重要的趋势指标
+            'kdj': 0.1,         # KDJ作为辅助指标
+            'volume': 0.15,      # 成交量是重要的确认指标
+            'dmi': 0.1,         # DMI帮助判断趋势强度
+            'cci': 0.05,        # CCI作为辅助指标
+            'trix': 0.05        # TRIX作为辅助指标
+        }
         
     def calculate_indicators(self, df):
         """计算技术指标"""
-        # 计算移动平均线
+        # 保留原有指标计算
         df['MA5'] = df['close'].rolling(window=5).mean()
         df['MA20'] = df['close'].rolling(window=20).mean()
         
-        # 计算布林带
+        # 布林带计算
         df['BB_middle'] = df['MA20']
         df['BB_std'] = df['close'].rolling(window=20).std()
         df['BB_upper'] = df['BB_middle'] + 2 * df['BB_std']
         df['BB_lower'] = df['BB_middle'] - 2 * df['BB_std']
         
+        # RSI计算
+        def calculate_rsi(data, periods=14):
+            delta = data.diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=periods).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=periods).mean()
+            rs = gain / loss
+            return 100 - (100 / (1 + rs))
+        
+        df['RSI'] = calculate_rsi(df['close'])
+        
+        # 添加MACD指标
+        exp1 = df['close'].ewm(span=12, adjust=False).mean()
+        exp2 = df['close'].ewm(span=26, adjust=False).mean()
+        df['MACD'] = exp1 - exp2
+        df['Signal_Line'] = df['MACD'].ewm(span=9, adjust=False).mean()
+        df['MACD_Hist'] = df['MACD'] - df['Signal_Line']
+        
+        # 添加KDJ指标
+        low_min = df['low'].rolling(window=9).min()
+        high_max = df['high'].rolling(window=9).max()
+        df['RSV'] = (df['close'] - low_min) / (high_max - low_min) * 100
+        df['K'] = df['RSV'].ewm(com=2).mean()
+        df['D'] = df['K'].ewm(com=2).mean()
+        df['J'] = 3 * df['K'] - 2 * df['D']
+        
+        # 计算成交量变化
+        df['Volume_MA5'] = df['volume'].rolling(window=5).mean()
+        df['Volume_Ratio'] = df['volume'] / df['Volume_MA5']
+        
+        # 添加新的技术指标
+        
+        # 添加DMI指标
+        df['TR'] = pd.DataFrame({
+            'HL': df['high'] - df['low'],
+            'HC': abs(df['high'] - df['close'].shift(1)),
+            'LC': abs(df['low'] - df['close'].shift(1))
+        }).max(axis=1)
+        
+        df['+DM'] = np.where((df['high'] - df['high'].shift(1)) > (df['low'].shift(1) - df['low']), 
+                             np.maximum(df['high'] - df['high'].shift(1), 0), 0)
+        df['-DM'] = np.where((df['low'].shift(1) - df['low']) > (df['high'] - df['high'].shift(1)), 
+                             np.maximum(df['low'].shift(1) - df['low'], 0), 0)
+        
+        df['+DI'] = 100 * (df['+DM'].rolling(window=14).sum() / df['TR'].rolling(window=14).sum())
+        df['-DI'] = 100 * (df['-DM'].rolling(window=14).sum() / df['TR'].rolling(window=14).sum())
+        df['DX'] = 100 * abs(df['+DI'] - df['-DI']) / (df['+DI'] + df['-DI'])
+        df['ADX'] = df['DX'].rolling(window=14).mean()
+        
+        # 添加CCI指标
+        tp = (df['high'] + df['low'] + df['close']) / 3
+        df['CCI'] = (tp - tp.rolling(20).mean()) / (0.015 * tp.rolling(20).std())
+        
+        # 添加TRIX指标
+        def calc_trix(close, n=12):
+            tr = close.ewm(span=n, adjust=False).mean()
+            tr2 = tr.ewm(span=n, adjust=False).mean()
+            tr3 = tr2.ewm(span=n, adjust=False).mean()
+            return (tr3 - tr3.shift(1)) / tr3.shift(1) * 100
+        
+        df['TRIX'] = calc_trix(df['close'])
+        
         return df
+    
+    def calculate_signal_score(self, df, i):
+        """计算信号得分，优化各指标的得分计算方法"""
+        scores = {}
+        
+        # MA交叉得分 - 考虑交叉角度
+        ma5_slope = (df['MA5'].iloc[i] - df['MA5'].iloc[i-1]) / df['MA5'].iloc[i-1]
+        ma20_slope = (df['MA20'].iloc[i] - df['MA20'].iloc[i-1]) / df['MA20'].iloc[i-1]
+        scores['ma_cross'] = 1 if (df['MA5'].iloc[i] > df['MA20'].iloc[i] and 
+                                 df['MA5'].iloc[i-1] <= df['MA20'].iloc[i-1] and
+                                 ma5_slope > ma20_slope) else 0
+        
+        # 布林带得分 - 优化计算方法
+        bb_position = (df['close'].iloc[i] - df['BB_lower'].iloc[i]) / (df['BB_upper'].iloc[i] - df['BB_lower'].iloc[i])
+        scores['bollinger'] = max(0, 1 - bb_position * 2) if bb_position < 0.5 else 0
+        
+        # RSI得分 - 细化区间
+        rsi = df['RSI'].iloc[i]
+        if rsi < 30:
+            scores['rsi'] = 1
+        elif rsi < 40:
+            scores['rsi'] = 0.5
+        else:
+            scores['rsi'] = 0
+        
+        # MACD得分 - 考虑柱状图强度
+        macd_strength = df['MACD_Hist'].iloc[i] / df['close'].iloc[i] * 100
+        scores['macd'] = min(1, max(0, macd_strength / 0.5)) if df['MACD_Hist'].iloc[i] > 0 else 0
+        
+        # KDJ得分 - 优化超卖判断
+        k = df['K'].iloc[i]
+        d = df['D'].iloc[i]
+        if k < 20:
+            scores['kdj'] = 1
+        elif k < 30:
+            scores['kdj'] = 0.5
+        else:
+            scores['kdj'] = 0
+        
+        # 成交量得分 - 考虑连续性
+        volume_ratio = df['Volume_Ratio'].iloc[i]
+        volume_trend = (df['volume'].iloc[i] > df['volume'].iloc[i-1])
+        scores['volume'] = min(1, volume_ratio / 2) if (volume_ratio > 1 and volume_trend) else 0
+        
+        # DMI得分 - 优化判断标准
+        adx = df['ADX'].iloc[i]
+        plus_di = df['+DI'].iloc[i]
+        minus_di = df['-DI'].iloc[i]
+        if adx > 25 and plus_di > minus_di:
+            scores['dmi'] = min(1, (adx - 25) / 25)
+        else:
+            scores['dmi'] = 0
+        
+        # CCI得分 - 优化区间判断
+        cci = df['CCI'].iloc[i]
+        if -100 <= cci <= -80:
+            scores['cci'] = 1
+        elif -80 < cci <= -50:
+            scores['cci'] = 0.5
+        else:
+            scores['cci'] = 0
+        
+        # TRIX得分 - 考虑趋势变化
+        trix = df['TRIX'].iloc[i]
+        trix_prev = df['TRIX'].iloc[i-1]
+        if trix > 0 and trix > trix_prev:
+            scores['trix'] = min(1, trix / 0.5)
+        else:
+            scores['trix'] = 0
+        
+        # 计算总分
+        total_score = sum(score * self.weights[indicator] 
+                         for indicator, score in scores.items())
+        
+        return total_score, scores
     
     def generate_signals(self, df):
         """生成交易信号"""
-        df['signal'] = 0  # 0表示无信号，1表示买入
-        
-        # 趋势跟踪信号
-        df['MA5_cross_MA20'] = (df['MA5'] > df['MA20']) & (df['MA5'].shift(1) <= df['MA20'].shift(1))
-        
-        # 布林带信号
-        df['price_below_lower'] = df['close'] < df['BB_lower']
-        
-        # 添加信号原因说明
+        df['signal'] = 0
+        df['signal_score'] = 0.0
         df['signal_reason'] = ''
+        df['detailed_scores'] = ''
         
-        # 生成买入信号
         for i in range(1, len(df)):
-            # 同时满足两个条件
-            if (df['MA5_cross_MA20'].iloc[i] and 
-                df['close'].iloc[i] > df['MA20'].iloc[i] and 
-                df['price_below_lower'].iloc[i]):
-                df.loc[df.index[i], 'signal'] = 2  # 使用2表示同时满足两个条件
-                df.loc[df.index[i], 'signal_reason'] = 'MA5上穿MA20且价格在MA20上方，同时触及布林带下轨'
+            total_score, detailed_scores = self.calculate_signal_score(df, i)
             
-            # 满足MA5上穿MA20
-            elif (df['MA5_cross_MA20'].iloc[i] and df['close'].iloc[i] > df['MA20'].iloc[i]):
+            # 设置信号阈值
+            if total_score > 0.3:  # 可以调整阈值
                 df.loc[df.index[i], 'signal'] = 1
-                df.loc[df.index[i], 'signal_reason'] = 'MA5上穿MA20，且价格在MA20上方'
-            
-            # 满足布林带下轨
-            elif df['price_below_lower'].iloc[i]:
-                df.loc[df.index[i], 'signal'] = 1
-                df.loc[df.index[i], 'signal_reason'] = '价格触及布林带下轨'
+                df.loc[df.index[i], 'signal_score'] = total_score
+                
+                # 生成详细的信号原因
+                reasons = []
+                if detailed_scores['ma_cross'] > 0:
+                    reasons.append('MA5上穿MA20')
+                if detailed_scores['bollinger'] > 0:
+                    reasons.append('价格接近布林带下轨')
+                if detailed_scores['rsi'] > 0:
+                    reasons.append('RSI超卖')
+                if detailed_scores['macd'] > 0:
+                    reasons.append('MACD金叉')
+                if detailed_scores['kdj'] > 0:
+                    reasons.append('KDJ超卖')
+                if detailed_scores['volume'] > 0:
+                    reasons.append('成交量放大')
+                if detailed_scores['dmi'] > 0:
+                    reasons.append('ADX强势')
+                if detailed_scores['cci'] > 0:
+                    reasons.append('CCI回归')
+                if detailed_scores['trix'] > 0:
+                    reasons.append('TRIX上升')
+                
+                df.loc[df.index[i], 'signal_reason'] = '；'.join(reasons)
+                df.loc[df.index[i], 'detailed_scores'] = str(detailed_scores)
         
         return df
     
-    def apply_risk_management(self, df, entry_price):
-        """应用风险管理"""
-        for i in range(1, len(df)):
-            current_price = df['close'].iloc[i]
-            
-            # 检查止损
-            if entry_price is not None:
-                loss_pct = (current_price - entry_price) / entry_price
-                if loss_pct < -self.stop_loss:
-                    df.loc[df.index[i], 'signal'] = -1
-                    df.loc[df.index[i], 'signal_reason'] = f'触发止损（亏损超过{self.stop_loss*100}%）'
-                    entry_price = None
-                
-                # 检查止盈
-                elif loss_pct > self.take_profit:
-                    df.loc[df.index[i], 'signal'] = -1
-                    df.loc[df.index[i], 'signal_reason'] = f'触发止盈（盈利超过{self.take_profit*100}%）'
-                    entry_price = None
-            
-            # 更新入场价格
-            if df['signal'].iloc[i] == 1:
-                entry_price = current_price
-                
-        return df, entry_price
-
     def backtest(self, df):
         """回测策略"""
         df = self.calculate_indicators(df)
         df = self.generate_signals(df)
-        
-        entry_price = None
-        df, _ = self.apply_risk_management(df, entry_price)
-        
         return df
 
 class StockDataFetcher:
@@ -129,7 +253,7 @@ class StockDataFetcher:
             return self.data_cache[cache_key]
             
         try:
-            # 获取股票日线数据
+            # 取股票日线数据
             df = ak.stock_zh_a_hist(symbol=stock_code, 
                                   start_date=start_date, 
                                   end_date=end_date,
@@ -197,7 +321,7 @@ def main():
     
     # 初始化数据获取器和交易策略
     fetcher = StockDataFetcher()
-    strategy = TradingStrategy(stop_loss=0.07, take_profit=0.15)
+    strategy = TradingStrategy()
     screener = StockScreener(min_amount=200000000, min_market_value=20000000000)
     
     # 设置时间范围
@@ -227,17 +351,16 @@ def main():
             
             # 返回所有买入信号（包括同时满足两个条件的信号）
             if latest_signal >= 1:
-                signal_strength = "同时满足双重买入条件" if latest_signal == 2 else "买入"
                 return {
                     'code': stock_code,
                     'name': stock_name,
-                    'signal': signal_strength,
+                    'signal': latest_signal,
+                    'signal_score': result_df['signal_score'].iloc[-1],
                     'price': result_df['close'].iloc[-1],
                     'date': result_df.index[-1],
                     'market_value': market_value,
                     'daily_amount': stock_data['amount'].iloc[-1],
-                    'reason': result_df['signal_reason'].iloc[-1],
-                    'signal_strength': latest_signal  # 添加信号强度
+                    'reason': result_df['signal_reason'].iloc[-1]
                 }
         except Exception as e:
             print(f"分析股票{stock_code}时出错: {e}")
@@ -262,53 +385,51 @@ def main():
     end_time = datetime.now()
     run_duration = end_time - start_time
     
-    # 输出交易机会
-    print("\n=== 买入信号汇总 ===")
+    # 设置最大推荐股票数量
+    MAX_RECOMMENDATIONS = 50
+    
+    # 修改输出部分
+    print("\n=== 买入信号汇总（按信号得分排序）===")
     print(f"运行时间: {run_duration}")
-    print("代码  名称  信号强度  价格  市值(亿)  日成交额(亿)  买入理由")
+    print(f"筛选出的股票总数: {len(trading_opportunities)}")
+    print("代码  名称  信号得分  价格  市值(亿)  日成交额(亿)  买入理由")
     print("-" * 100)
 
-    # 先输出同时满足两个条件的股票
-    print("\n*** 同时满足双重买入条件的股票 ***")
-    for code, info in trading_opportunities.items():
-        if info['signal_strength'] == 2:
-            print(f"{code} {info['name']} {info['signal']} "
-                  f"{info['price']:.2f} {info['market_value']:.2f} "
-                  f"{info['daily_amount']/100000000:.2f} "
-                  f"{info['reason']}")
+    # 将结果转换为列表并按信号得分排序，只保留前N个最强信号
+    sorted_opportunities = sorted(
+        trading_opportunities.values(),
+        key=lambda x: x['signal_score'],
+        reverse=True
+    )[:MAX_RECOMMENDATIONS]  # 限制推荐数量
 
-    # 再输出满足单个条件的股票
-    print("\n*** 满足单个买入条件的股票 ***")
-    for code, info in trading_opportunities.items():
-        if info['signal_strength'] == 1:
-            print(f"{code} {info['name']} {info['signal']} "
-                  f"{info['price']:.2f} {info['market_value']:.2f} "
-                  f"{info['daily_amount']/100000000:.2f} "
-                  f"{info['reason']}")
+    # 输出排序后的结果
+    for info in sorted_opportunities:
+        print(f"{info['code']} {info['name']} {info['signal_score']:.2f} "
+              f"{info['price']:.2f} {info['market_value']:.2f} "
+              f"{info['daily_amount']/100000000:.2f} "
+              f"{info['reason']}")
 
-    # 保存结果到CSV文件
-    if trading_opportunities:
+    # 保存结果到CSV时也只保存推荐的股票
+    if sorted_opportunities:
         current_date = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f'trading_signals_{current_date}.csv'
         
-        # 创建DataFrame并只包含需要的列
         df_opportunities = pd.DataFrame([
             {
                 '代码': info['code'],
                 '名称': info['name'],
-                '信号强度': info['signal'],
+                '信号得分': info['signal_score'],
                 '当前价格': info['price'],
                 '市值(亿)': info['market_value'],
                 '日成交额(亿)': info['daily_amount']/100000000,
                 '买入理由': info['reason']
             }
-            for info in trading_opportunities.values()
+            for info in sorted_opportunities  # 只保存推荐的股票
         ])
         
-        # 保存为CSV文件
         df_opportunities.to_csv(filename, index=False, encoding='utf-8-sig')
         print(f"\n结果已保存到: {filename}")
-        print(f"总运行时间: {run_duration}")
+        print(f"推荐股票数量: {len(sorted_opportunities)}")
 
 if __name__ == "__main__":
     main()
