@@ -301,7 +301,7 @@ class StockScreener:
                 return False
                 
             # 检查市值条件（单位：亿元转换为元）
-            if market_value * 100000000 < self.min_market_value:
+            if market_value < self.min_market_value:
                 return False
             
             # 检查平均成交额
@@ -349,7 +349,6 @@ def main():
             result_df = strategy.backtest(stock_data)
             latest_signal = result_df['signal'].iloc[-1]
             
-            # 返回所有买入信号（包括同时满足两个条件的信号）
             if latest_signal >= 1:
                 return {
                     'code': stock_code,
@@ -371,7 +370,7 @@ def main():
                        for _, row in stock_list.iterrows()]
     
     # 使用tqdm包装线程池的执行过程
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=20) as executor:  # 增加线程数
         results = list(tqdm(
             executor.map(process_stock, stock_info_list),
             total=len(stock_info_list),
@@ -402,32 +401,56 @@ def main():
         reverse=True
     )[:MAX_RECOMMENDATIONS]  # 限制推荐数量
 
-    # 输出排序后的结果
+    # 输出排序后的结果，市值转换为亿元
     for info in sorted_opportunities:
         print(f"{info['code']} {info['name']} {info['signal_score']:.2f} "
-              f"{info['price']:.2f} {info['market_value']:.2f} "
+              f"{info['price']:.2f} {info['market_value']/100000000:.2f} "  # 转换为亿元
               f"{info['daily_amount']/100000000:.2f} "
               f"{info['reason']}")
 
-    # 保存结果到CSV时也只保存推荐的股票
+    # 保存结果到CSV时添加指标说明
     if sorted_opportunities:
         current_date = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f'trading_signals_{current_date}.csv'
         
-        df_opportunities = pd.DataFrame([
+        # 创建技术指标说明
+        indicator_descriptions = pd.DataFrame([
+            ['技术指标说明', ''],
+            ['1. MA交叉(15%)', 'MA5与MA20交叉是重要的趋势转换信号。当5日均线上穿20日均线时，表示可能开始上涨趋势。'],
+            ['2. 布林带(15%)', '布林带是以移动平均线为中轨，上下各加减两个标准差形成的带状区域。当价格接近下轨时，可能存在超卖机会。'],
+            ['3. RSI(10%)', '相对强弱指标，用于判断超买超卖。RSI低于30表示超卖，低于40表示较弱。'],
+            ['4. MACD(15%)', '平滑异同移动平均线，是重要的趋势指标。当MACD柱由负转正时，表示可能形成上涨趋势。'],
+            ['5. KDJ(10%)', '随机指标，用于判断超买超卖。K值小于20表示超卖，是买入机会。'],
+            ['6. 成交量(15%)', '成交量是价格变动的确认指标。当成交量较前期明显放大时，表示趋势更可靠。'],
+            ['7. DMI(10%)', '趋势方向指标，用于判断趋势强度。ADX大于25且+DI大于-DI时，表示上涨趋势强劲。'],
+            ['8. CCI(5%)', '顺势指标，用于判断价格偏离程度。CCI在-100到-80之间时，表示可能存在买入机会。'],
+            ['9. TRIX(5%)', '三重指数平滑移动平均指标，用于判断中长期趋势。TRIX由负转正且持续上升，表示趋势向好。'],
+            ['', ''],
+            ['信号得分说明', '各指标得分根据其重要性赋予不同权重，总分大于0.3时产生买入信号。得分越高，信号越强。'],
+            ['', ''],
+            ['筛选结果', '以下是按信号得分排序的股票列表：'],
+            ['', '']
+        ], columns=['指标', '说明'])
+        
+        # 创建股票数据DataFrame
+        stock_data = pd.DataFrame([
             {
                 '代码': info['code'],
                 '名称': info['name'],
                 '信号得分': info['signal_score'],
                 '当前价格': info['price'],
-                '市值(亿)': info['market_value'],
+                '市值(亿)': info['market_value']/100000000,  # 转换为亿元
                 '日成交额(亿)': info['daily_amount']/100000000,
                 '买入理由': info['reason']
             }
-            for info in sorted_opportunities  # 只保存推荐的股票
+            for info in sorted_opportunities
         ])
         
-        df_opportunities.to_csv(filename, index=False, encoding='utf-8-sig')
+        # 将说明和数据合并保存
+        with open(filename, 'w', encoding='utf-8-sig') as f:
+            indicator_descriptions.to_csv(f, index=False)
+            stock_data.to_csv(f, index=False)
+            
         print(f"\n结果已保存到: {filename}")
         print(f"推荐股票数量: {len(sorted_opportunities)}")
 
