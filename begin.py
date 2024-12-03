@@ -7,17 +7,20 @@ from tqdm import tqdm
 
 class TradingStrategy:
     def __init__(self):
-        # 重新分配权重，总和保持为1
+        # 更新权重分配
         self.weights = {
-            'ma_cross': 0.15,    # MA交叉是较为可靠的趋势指标
-            'bollinger': 0.15,   # 布林带在市场波动中表现稳定
-            'rsi': 0.1,         # RSI作为超买超卖指标
-            'macd': 0.15,       # MACD作为重要的趋势指标
-            'kdj': 0.1,         # KDJ作为辅助指标
-            'volume': 0.15,      # 成交量是重要的确认指标
-            'dmi': 0.1,         # DMI帮助判断趋势强度
-            'cci': 0.05,        # CCI作为辅助指标
-            'trix': 0.05        # TRIX作为辅助指标
+            'ma_cross': 0.12,    # MA交叉
+            'bollinger': 0.12,   # 布林带
+            'rsi': 0.08,        # RSI
+            'macd': 0.12,       # MACD
+            'kdj': 0.08,        # KDJ
+            'volume': 0.12,      # 成交量
+            'dmi': 0.08,        # DMI
+            'cci': 0.05,        # CCI
+            'trix': 0.05,       # TRIX
+            'obv': 0.06,        # OBV（能量潮指标）
+            'wr': 0.06,         # WR（威廉指标）
+            'emv': 0.06         # EMV（简易波动指标）
         }
         
     def calculate_indicators(self, df):
@@ -93,10 +96,33 @@ class TradingStrategy:
         
         df['TRIX'] = calc_trix(df['close'])
         
+        # 添加OBV（能量潮指标）
+        df['OBV'] = (np.sign(df['close'].diff()) * df['volume']).fillna(0).cumsum()
+        df['OBV_MA'] = df['OBV'].rolling(window=20).mean()
+        
+        # 添加威廉指标(WR)
+        def calculate_wr(data, periods=14):
+            high = data['high'].rolling(periods).max()
+            low = data['low'].rolling(periods).min()
+            wr = -100 * (high - data['close']) / (high - low)
+            return wr
+        
+        df['WR'] = calculate_wr(df)
+        
+        # 添加EMV（简易波动指标）
+        def calculate_emv(data):
+            dm = ((data['high'] + data['low']) / 2) - ((data['high'].shift(1) + data['low'].shift(1)) / 2)
+            br = (data['volume'] / 100000000) / ((data['high'] - data['low']))
+            emv = dm / br 
+            return emv
+            
+        df['EMV'] = calculate_emv(df)
+        df['EMV_MA'] = df['EMV'].rolling(window=14).mean()
+        
         return df
     
     def calculate_signal_score(self, df, i):
-        """计算信号得分，优化各指标的得分计算方法"""
+        """计算信号得分"""
         scores = {}
         
         # MA交叉得分 - 考虑交叉角度
@@ -164,6 +190,25 @@ class TradingStrategy:
         else:
             scores['trix'] = 0
         
+        # OBV得分
+        obv_trend = (df['OBV'].iloc[i] > df['OBV_MA'].iloc[i] and 
+                    df['OBV'].iloc[i] > df['OBV'].iloc[i-1])
+        scores['obv'] = 1 if obv_trend else 0
+        
+        # WR得分
+        wr = df['WR'].iloc[i]
+        if wr < -80:
+            scores['wr'] = 1
+        elif wr < -60:
+            scores['wr'] = 0.5
+        else:
+            scores['wr'] = 0
+            
+        # EMV得分
+        emv = df['EMV'].iloc[i]
+        emv_ma = df['EMV_MA'].iloc[i]
+        scores['emv'] = 1 if (emv > emv_ma and emv > 0) else 0
+        
         # 计算总分
         total_score = sum(score * self.weights[indicator] 
                          for indicator, score in scores.items())
@@ -205,6 +250,12 @@ class TradingStrategy:
                     reasons.append('CCI回归')
                 if detailed_scores['trix'] > 0:
                     reasons.append('TRIX上升')
+                if detailed_scores['obv'] > 0:
+                    reasons.append('OBV上升趋势')
+                if detailed_scores['wr'] > 0:
+                    reasons.append('WR超卖')
+                if detailed_scores['emv'] > 0:
+                    reasons.append('EMV上升')
                 
                 df.loc[df.index[i], 'signal_reason'] = '；'.join(reasons)
                 df.loc[df.index[i], 'detailed_scores'] = str(detailed_scores)
@@ -416,15 +467,18 @@ def main():
         # 创建技术指标说明
         indicator_descriptions = pd.DataFrame([
             ['技术指标说明', ''],
-            ['1. MA交叉(15%)', 'MA5与MA20交叉是重要的趋势转换信号。当5日均线上穿20日均线时，表示可能开始上涨趋势。'],
-            ['2. 布林带(15%)', '布林带是以移动平均线为中轨，上下各加减两个标准差形成的带状区域。当价格接近下轨时，可能存在超卖机会。'],
-            ['3. RSI(10%)', '相对强弱指标，用于判断超买超卖。RSI低于30表示超卖，低于40表示较弱。'],
-            ['4. MACD(15%)', '平滑异同移动平均线，是重要的趋势指标。当MACD柱由负转正时，表示可能形成上涨趋势。'],
-            ['5. KDJ(10%)', '随机指标，用于判断超买超卖。K值小于20表示超卖，是买入机会。'],
-            ['6. 成交量(15%)', '成交量是价格变动的确认指标。当成交量较前期明显放大时，表示趋势更可靠。'],
-            ['7. DMI(10%)', '趋势方向指标，用于判断趋势强度。ADX大于25且+DI大于-DI时，表示上涨趋势强劲。'],
+            ['1. MA交叉(12%)', 'MA5与MA20交叉是重要的趋势转换信号。当5日均线上穿20日均线时，表示可能开始上涨趋势。'],
+            ['2. 布林带(12%)', '布林带是以移动平均线为中轨，上下各加减两个标准差形成的带状区域。当价格接近下轨时，可能存在超卖机会。'],
+            ['3. RSI(8%)', '相对强弱指标，用于判断超买超卖。RSI低于30表示超卖，低于40表示较弱。'],
+            ['4. MACD(12%)', '平滑异同移动平均线，是重要的趋势指标。当MACD柱由负转正时，表示可能形成上涨趋势。'],
+            ['5. KDJ(8%)', '随机指标，用于判断超买超卖。K值小于20表示超卖，是买入机会。'],
+            ['6. 成交量(12%)', '成交量是价格变动的确认指标。当成交量较前期明显放大时，表示趋势更可靠。'],
+            ['7. DMI(8%)', '趋势方向指标，用于判断趋势强度。ADX大于25且+DI大于-DI时，表示上涨趋势强劲。'],
             ['8. CCI(5%)', '顺势指标，用于判断价格偏离程度。CCI在-100到-80之间时，表示可能存在买入机会。'],
             ['9. TRIX(5%)', '三重指数平滑移动平均指标，用于判断中长期趋势。TRIX由负转正且持续上升，表示趋势向好。'],
+            ['10. OBV(6%)', '能量潮指标，用于判断趋势的持续性。当OBV上升且大于其MA时，表示趋势向上。'],
+            ['11. WR(6%)', '威廉指标，用于判断超买超卖。WR小于-80表示超卖，小于-60表示较弱。'],
+            ['12. EMV(6%)', '简易波动指标，用于判断趋势的强度。当EMV大于其MA且大于0时，表示趋势向上。'],
             ['', ''],
             ['信号得分说明', '各指标得分根据其重要性赋予不同权重，总分大于0.3时产生买入信号。得分越高，信号越强。'],
             ['', ''],
