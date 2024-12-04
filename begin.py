@@ -491,10 +491,10 @@ def main():
             {
                 '代码': info['code'],
                 '名称': info['name'],
-                '信号得分': info['signal_score'],
-                '当前价格': info['price'],
-                '市值(亿)': info['market_value']/100000000,  # 转换为亿元
-                '日成交额(亿)': info['daily_amount']/100000000,
+                '信号得分': round(info['signal_score'], 2),
+                '当前价格': round(info['price'], 2),
+                '市值(亿)': round(info['market_value']/100000000, 2),
+                '日成交额(亿)': round(info['daily_amount']/100000000, 2),
                 '买入理由': info['reason']
             }
             for info in sorted_opportunities
