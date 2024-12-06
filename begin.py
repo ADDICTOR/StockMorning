@@ -462,7 +462,7 @@ def main():
     # 保存结果到CSV时添加指标说明
     if sorted_opportunities:
         current_date = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f'trading_signals_{current_date}.csv'
+        filename = f'./trading_signals/trading_signals_{current_date}.csv'
         
         # 创建技术指标说明
         indicator_descriptions = pd.DataFrame([
