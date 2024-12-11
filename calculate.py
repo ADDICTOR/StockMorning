@@ -1,12 +1,15 @@
-import pandas as pd
-from datetime import datetime
+"""doc"""
 import os
-from tqdm import tqdm
 import re
-from begin import StockDataFetcher
+from datetime import datetime
 import concurrent.futures
+import pandas as pd
+from tqdm import tqdm
+from begin import StockDataFetcher
 import numpy as np
 from functools import partial
+import baostock as bs
+
 
 def get_date_from_filename(filename):
     """从文件名中提取日期和时间"""
@@ -93,10 +96,35 @@ def get_stock_data_batch(stock_codes, start_date, end_date, fetcher, batch_size=
                         pbar.update(1)
     return results, failed_codes
 
+def get_trading_dates(start_date, end_date):
+    """获取A股交易日历"""
+    try:
+        # 登录系统
+        bs.login()
+        
+        # 获取交易日历
+        rs = bs.query_trade_dates(start_date=start_date.strftime('%Y-%m-%d'),
+                                end_date=end_date.strftime('%Y-%m-%d'))
+        
+        # 处理结果
+        trading_dates = []
+        while (rs.error_code == '0') & rs.next():
+            row = rs.get_row_data()
+            if row[1] == '1':  # 1表示交易日
+                trading_dates.append(pd.to_datetime(row[0]))
+                
+        # 登出系统
+        bs.logout()
+        
+        return sorted(trading_dates)
+    except Exception as e:
+        print(f"获取交易日历失败: {e}")
+        return []
+
 def calculate_index(stock_list, start_date, end_date=None, fetcher=None):
     """计算指数涨跌幅"""
     if end_date is None:
-        end_date = datetime.now().strftime('%Y%m%d')
+        end_date = datetime.now()
     
     # 初始化结果DataFrame
     total_weight = len(stock_list)  # 等权重
@@ -104,56 +132,52 @@ def calculate_index(stock_list, start_date, end_date=None, fetcher=None):
     # 批量获取股票数据
     stock_codes = stock_list['代码'].tolist()
     start_date_str = start_date.strftime('%Y%m%d')
+    end_date_str = end_date.strftime('%Y%m%d')
+    print(f"开始获取股票数据，从 {start_date_str} 到 {end_date_str}")
+    
     stock_data_dict, failed_codes = get_stock_data_batch(
         stock_codes, 
         start_date_str, 
-        end_date, 
+        end_date_str, 
         fetcher, 
         batch_size=5
     )
     
-    # 如果没有获取到任何数据，返回空结果
-    if not stock_data_dict and not failed_codes:
-        print("未能获取任何股票数据")
+    # 获取交易日期
+    trading_dates = get_trading_dates(start_date, end_date)
+    
+    if len(trading_dates) < 2:
+        print("交易日期不足")
         return pd.DataFrame(), {}
     
-    # 找到所有数据的共同日期
-    common_dates = None
-    for data in stock_data_dict.values():
-        if common_dates is None:
-            common_dates = set(data.index)
-        else:
-            common_dates &= set(data.index)
-    
-    common_dates = sorted(list(common_dates))
-    
-    if not common_dates:
-        print("没有找到共同的交易日期")
-        return pd.DataFrame(), {}
-    
-    # 使用numpy进行快速计算
-    dates = np.array(common_dates)
-    returns_matrix = np.zeros((len(stock_list), len(dates)-1))  # 注意：使用总股票数量
+    # 初始化结果数组
+    returns_matrix = np.zeros((len(stock_list), len(trading_dates)-1))
     
     # 计算每只股票的收益率
     for i, code in enumerate(stock_codes):
-        if code in stock_data_dict:
+        if code in stock_data_dict and stock_data_dict[code] is not None:
             data = stock_data_dict[code]
-            stock_data = data.loc[common_dates]
-            returns_matrix[i] = np.diff(stock_data['close'].values) / stock_data['close'].values[:-1]
-        else:
-            # 对于获取失败的股票，设置收益率为0
-            returns_matrix[i] = np.zeros(len(dates)-1)
+            # 对于每个交易日，如果有数据就用实际数据，如果没有就用0
+            for j in range(len(trading_dates)-1):
+                current_date = trading_dates[j]
+                next_date = trading_dates[j+1]
+                
+                if current_date in data.index and next_date in data.index:
+                    current_price = data.loc[current_date, 'close']
+                    next_price = data.loc[next_date, 'close']
+                    returns_matrix[i, j] = (next_price - current_price) / current_price
+                else:
+                    returns_matrix[i, j] = 0
     
     # 计算等权重组合收益率
-    portfolio_returns = np.mean(returns_matrix, axis=0)  # 使用numpy的mean代替循环
+    portfolio_returns = np.mean(returns_matrix, axis=0)
     
     # 计算指数点位
-    index_points = 1000 * np.cumprod(1 + portfolio_returns)  # 基点1000
+    index_points = 1000 * np.cumprod(1 + portfolio_returns)
     
     # 创建结果DataFrame
     index_data = pd.DataFrame({
-        '日期': dates[1:],  # 跳过第一天
+        '日期': trading_dates[1:],
         '指数涨跌幅': portfolio_returns,
         '指数点位': index_points
     })
@@ -167,8 +191,15 @@ def calculate_index(stock_list, start_date, end_date=None, fetcher=None):
         stats['最大回撤'] = np.max(drawdown)
         
         # 添加数据获取成功率信息
-        stats['数据获取成功率'] = (len(stock_codes) - len(failed_codes)) / len(stock_codes)
+        stats['数据���取成功率'] = (len(stock_codes) - len(failed_codes)) / len(stock_codes)
         stats['数据缺失股票'] = list(failed_codes)
+    
+    # 打印统计信息
+    print("\n=== 指数计算结果 ===")
+    print(f"计算区间: {trading_dates[0].strftime('%Y-%m-%d')} 到 {trading_dates[-1].strftime('%Y-%m-%d')}")
+    print(f"总交易日数: {len(trading_dates)}")
+    print(f"成分股数量: {len(stock_list)}")
+    print(f"数据获取成功率: {stats.get('数据获取成功率', 0)*100:.2f}%")
     
     return index_data, stats
 
