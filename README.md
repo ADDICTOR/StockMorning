@@ -1,8 +1,127 @@
 # StockMorning
 
-StockMorning is a web application that allows users to search for stock information and analyze the data. Users can also create their own portfolios and track their investment performance over time.
+StockMorning 是一个基于 Python 的股票量化交易系统，支持技术指标分析、股票筛选和持仓管理等功能。
 
-## Features
+## 功能特点
 
-- Search for stock information by ticker symbol or company name
-- View historical stock prices, volumes, and market cap
+- 多维度技术指标分析（MA、MACD、RSI、KDJ等12个指标）
+- 基于多线程的高效数据获取
+- 自动股票筛选和信号生成
+- 持仓管理和风险监控
+- 指数表现跟踪分析
+
+## 系统架构
+
+StockMorning/
+├── begin.py # 主要策略实现
+├── calculate.py # 指数计算和分析
+├── end.py # 持仓管理系统
+└── config.yaml # 配置文件
+
+## 优化路线图
+
+### 1. 回测系统完善
+- [ ] 添加关键回测指标
+  - 夏普比率(Sharpe Ratio)
+  - 最大回撤(Maximum Drawdown)
+  - 年化收益率(Annual Return)
+  - 信息比率(Information Ratio)
+- [ ] 实现交易成本模拟
+  - 手续费
+  - 印花税
+  - 滑点
+- [ ] 开发回测可视化模块
+  - 收益曲线
+  - 持仓分布
+  - 交易记录
+
+### 2. 风险控制增强
+- [ ] 完善仓位管理
+  - 单一股票最大持仓限制
+  - 行业敞口控制
+  - 整体仓位动态调整
+- [ ] 实现风险预警系统
+  - 波动率监控
+  - 流动性风险控制
+  - 集中度风险管理
+- [ ] 添加组合风险分析
+  - Beta值控制
+  - 相关性分析
+  - VaR计算
+
+### 3. 策略维度扩展
+
+- [ ] 基本面分析模块
+  - 财务指标分析
+  - 估值指标评估
+  - 行业地位分析
+- [ ] 市场情绪分析
+  - 资金流向监控
+  - 机构持仓跟踪
+  - 市场情绪指标
+- [ ] 宏观因素整合
+  - 行业景气度分析
+  - 政策影响评估
+  - 市场周期判断
+
+### 4. 数据源优化
+
+- [ ] 多数据源支持
+  - Wind接口集成
+  - 东方财富数据对接
+  - 其他备选数据源
+- [ ] 实时行情系统
+  - Level-2行情接入
+  - 盘口数据分析
+  - 实时指标计算
+- [ ] 另类数据整合
+  - 舆情数据分析
+  - 行业研报解析
+  - 消息面监控
+
+### 5. 机器学习应用
+
+- [ ] 预测模型开发
+  - LSTM价格预测
+  - XGBoost选股模型
+  - 随机森林分类器
+- [ ] 因子挖掘系统
+  - 多维度因子库
+  - 因子有效性检验
+  - 因子组合优化
+- [ ] 强化学习策略
+  - Q-Learning交易策略
+  - Policy Gradient应用
+  - 多因子强化学习
+
+### 6. 系统架构优化
+
+- [ ] Web界面开发
+  - 策略监控面板
+  - 回测结果展示
+  - 实时交易界面
+- [ ] 性能优化
+  - 数据处理加速
+  - 内存使用优化
+  - 计算效率提升
+- [ ] 模块化重构
+  - 策略模块解耦
+  - 接口标准化
+  - 插件系统支持
+
+## 使用说明
+
+[待补充]
+
+## 开发环境
+
+- Python 3.8+
+- 依赖包：pandas, numpy, akshare, tqdm
+
+## 贡献指南
+
+欢迎提交 Issue 和 Pull Request 来帮助改进项目。
+
+## 许可证
+
+[待补充]
