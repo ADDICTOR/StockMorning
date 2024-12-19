@@ -31,16 +31,47 @@ class Strategy:
         return signal_score, signals
     
     def should_buy(self, data: pd.DataFrame) -> tuple:
-        """买入决策"""
-        signal_score, signals = self.calculate_signals(data)
-        
-        # 生成买入理由
-        reasons = []
-        for name, signal in signals.items():
-            if signal > 0:
-                reasons.append(f"{name}指标触发买入")
-                
-        return signal_score > 0.3, signal_score, "; ".join(reasons)
+        """判断是否应该买入"""
+        try:
+            # 计算技术指标
+            ma5 = data['close'].rolling(window=5).mean()
+            ma20 = data['close'].rolling(window=20).mean()
+            
+            # 计算RSI
+            delta = data['close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs))
+            
+            # 获取最新值
+            current_ma5 = ma5.iloc[-1]
+            current_ma20 = ma20.iloc[-1]
+            current_rsi = rsi.iloc[-1]
+            
+            # 生成买入信号
+            ma_cross = current_ma5 > current_ma20
+            rsi_oversold = current_rsi < 30
+            
+            # 计算信号强度 (0-1)
+            signal_strength = 0.0
+            reasons = []
+            
+            if ma_cross:
+                signal_strength += 0.5
+                reasons.append("MA5上穿MA20")
+            
+            if rsi_oversold:
+                signal_strength += 0.5
+                reasons.append("RSI超卖")
+            
+            # 返回买入决策
+            should_buy = signal_strength > 0.3
+            return should_buy, signal_strength, "；".join(reasons) if reasons else "无买入信号"
+            
+        except Exception as e:
+            self.logger.error(f"计算买入信号时出错: {str(e)}")
+            return False, 0.0, "计算错误"
     
     def should_sell(self, data: pd.DataFrame, 
                    cost_price: float, 

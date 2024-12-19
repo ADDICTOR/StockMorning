@@ -55,14 +55,14 @@ strategy:
 
 # 风险控制
 risk:
-  stop_loss: 0.07
-  take_profit: 0.15
-  max_position_per_stock: 0.1
-  max_position_total: 0.8
+  stop_loss: 0.05
+  take_profit: 0.1
+  max_position_size: 0.3
+  max_drawdown: 0.15
 
 # 回测配置
 backtest:
-  commission_rate: 0.0005
+  commission_rate: 0.0003
   tax_rate: 0.001
-  slippage: 0.002
+  slippage: 0.001
   initial_capital: 1000000 
