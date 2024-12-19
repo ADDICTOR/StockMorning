@@ -12,7 +12,7 @@ StockMorning 是一个基于 Python 的股票量化交易系统，支持技术�
 
 ## 系统架构
 
-```
+```txt
 StockMorning/
 ├── src/                    # 源代码目录
 │   ├── main.py            # 主程序入口
