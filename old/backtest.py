@@ -35,7 +35,7 @@ class TradeRecord:
 class BacktestSystem:
     def __init__(self, 
                  initial_capital: float = 1000000,
-                 commission_rate: float = 0.0005,  # 手续费率
+                 commission_rate: float = 0.0005,  # 手续���率
                  tax_rate: float = 0.001,          # 印花税率
                  slippage: float = 0.002):         # 滑点率
         """
@@ -68,7 +68,7 @@ class BacktestSystem:
         执行交易
         :return: 交易是否成功
         """
-        # 计算实际成交���格（考虑滑点）
+        # 计算实际成交价格（考虑滑点）
         actual_price = price * (1 + self.slippage) if direction == "BUY" else price * (1 - self.slippage)
         
         # 计算交易成本
@@ -202,7 +202,12 @@ class BacktestSystem:
         }
         
     def plot_results(self):
-        """可��化回测结果"""
+        """可视化回测结果"""
+        # 确保输出目录存在
+        output_dir = './backtest_results'
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        
         plt.style.use('seaborn')
         fig = plt.figure(figsize=(15, 12))
         
@@ -289,7 +294,7 @@ class BacktestSystem:
         
         # 保存图片
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f'backtest_results_{timestamp}.png'
+        filename = os.path.join(output_dir, f'backtest_results_{timestamp}.png')
         plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.close('all')
         
@@ -298,11 +303,11 @@ class BacktestSystem:
         # 自动打开图片
         try:
             if platform.system() == 'Darwin':  # macOS
-                os.system(f'open {filename}')
+                os.system(f'open "{filename}"')
             elif platform.system() == 'Windows':
-                os.system(f'start {filename}')
+                os.system(f'start "" "{filename}"')
             else:  # Linux
-                os.system(f'xdg-open {filename}')
+                os.system(f'xdg-open "{filename}"')
         except Exception as e:
             print(f"无法自动打开图片: {e}")
         
@@ -365,7 +370,7 @@ class BacktestSystem:
             self.positions = {}  # 重置持仓信息
             self.current_capital = self.initial_capital  # 重置当前资金
             
-            # 转换日期格式并排序
+            # ���换日期格式并排序
             trades_df['date'] = pd.to_datetime(trades_df['date'])
             trades_df = trades_df.sort_values('date')
             

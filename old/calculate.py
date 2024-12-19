@@ -5,7 +5,7 @@ from datetime import datetime
 import concurrent.futures
 import pandas as pd
 from tqdm import tqdm
-from begin import StockDataFetcher
+from old.begin import StockDataFetcher
 import numpy as np
 from functools import partial
 import baostock as bs
