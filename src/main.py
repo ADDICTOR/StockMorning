@@ -231,7 +231,7 @@ def analyze_trade_records(trades_df: pd.DataFrame) -> Dict:
         # 计算年化夏普比率
         returns_std = daily_returns_pct.std()
         if returns_std > 0:
-            # 年化处理：收益率乘以sqrt(252)，标准差乘以sqrt(252)
+            # 年化处理：收益率乘以sqrt(252)，���准差乘以sqrt(252)
             sharpe_ratio = (excess_returns.mean() * np.sqrt(252)) / (returns_std * np.sqrt(252))
             # 简化后：
             # sharpe_ratio = excess_returns.mean() / returns_std * np.sqrt(252)
@@ -345,6 +345,18 @@ def main():
                   f"收益金额: {trade['收益金额']:.2f}")
     else:
         print("\n未获取到回测结果，请检查数据获取是否正常。")
+    
+    # 添加可视化部分
+    visualizer = Visualizer()
+    
+    # 生成可视化图表
+    output_dir = 'data/output/analysis'
+    os.makedirs(output_dir, exist_ok=True)
+    current_time = datetime.now().strftime('%Y%m%d_%H%M%S')
+    vis_path = os.path.join(output_dir, f'trade_analysis_{current_time}.png')
+    
+    visualizer.plot_trade_analysis(trades_df, save_path=vis_path)
+    print(f"\n交易分析图表已保存至: {vis_path}")
 
 if __name__ == "__main__":
     main() 
