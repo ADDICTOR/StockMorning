@@ -11,6 +11,7 @@ from .analysis.performance import PerformanceAnalyzer
 from .analysis.visualization import Visualizer
 from .utils.config import load_config
 from .utils.logger import setup_logger
+from .analysis.trade_evaluator import TradeEvaluator
 
 class StockMorning:
     """主程序类"""
@@ -272,6 +273,19 @@ def analyze_trade_records(trades_df: pd.DataFrame) -> Dict:
     
     return analysis
 
+def analyze_trades(trades_df: pd.DataFrame, stock_data: Dict[str, pd.DataFrame], total_capital: float):
+    """分析交易表现"""
+    evaluator = TradeEvaluator()
+    
+    # 评估交易时机
+    timing_analysis = evaluator.evaluate_trade_timing(trades_df, stock_data)
+    print("\n=== 交易时机分析 ===")
+    print(timing_analysis.to_string(index=False))
+    
+    return {
+        'timing_analysis': timing_analysis
+    }
+
 def main():
     """主程序入口"""
     # 初始化系统
@@ -288,63 +302,73 @@ def main():
     test_stocks = trades_df['股票代码'].unique().tolist()
     
     # 获取时间范围
-    start_date = trades_df['交易时间'].min().strftime('%Y%m%d')  # 使用strftime直接格式化
-    end_date = trades_df['交易时间'].max().strftime('%Y%m%d')    # 使用strftime直接格式化
+    start_date = trades_df['交易时间'].min().strftime('%Y%m%d')
+    end_date = trades_df['交易时间'].max().strftime('%Y%m%d')
     
-    print(f"\n开始回测 - 时间区间: {start_date} 至 {end_date}")
-    print(f"测试股票: {', '.join(test_stocks)}")
+    print(f"\n分析时间区间: {start_date} 至 {end_date}")
+    print(f"分析股票: {', '.join(test_stocks)}")
     
-    # 运行回测
-    results = system.run_backtest(start_date, end_date, stock_list=test_stocks)
+    # # 运行回测（暂时注释）
+    # print(f"\n开始回测 - 时间区间: {start_date} 至 {end_date}")
+    # print(f"测试股票: {', '.join(test_stocks)}")
+    # results = system.run_backtest(start_date, end_date, stock_list=test_stocks)
+    # 
+    # # 打印回测结果
+    # if results:
+    #     print("\n=== 回测系统结果 ===")
+    #     print("\n回测性能指标:")
+    #     for key, value in results['performance_metrics'].items():
+    #         print(f"{key}: {value:.4f}")
+    #     
+    #     print("\n回测���易统计:")
+    #     for key, value in results['trade_statistics'].items():
+    #         print(f"{key}: {value}")
+    #     
+    #     print("\n回测持仓统计:")
+    #     for key, value in results['position_statistics'].items():
+    #         print(f"{key}: {value}")
+    # else:
+    #     print("\n未获取到回测结果，请检查数据获取是否正常。")
     
-    # 打印结果
-    if results:
-        print("\n=== 回测系统结果 ===")  # 修改标题
-        print("\n回测性能指标:")  # 明确是回测指标
-        for key, value in results['performance_metrics'].items():
-            print(f"{key}: {value:.4f}")
-        
-        print("\n回测交易统计:")  # 明确是回测统计
-        for key, value in results['trade_statistics'].items():
-            print(f"{key}: {value}")
-        
-        print("\n回测持仓统计:")  # 明确是回测统计
-        for key, value in results['position_statistics'].items():
-            print(f"{key}: {value}")
-        
-        # 分析实际交易记录
-        trade_analysis = analyze_trade_records(trades_df)
-        print("\n=== 实际交易结果 ===")
-        
-        # 打印基础统计
-        print("\n基础统计:")
-        basic_metrics = ['总交易次数', '买入次数', '卖出次数', '总手续费', '总印花税', 
-                        '交易股票数', '最早交易日', '最后交易日']
-        for key in basic_metrics:
+    # 分析实际交易记录
+    trade_analysis = analyze_trade_records(trades_df)
+    print("\n=== 实际交易分析 ===")
+    
+    # 打印基础统计
+    print("\n基础统计:")
+    basic_metrics = ['总交易次数', '买入次数', '卖出次数', '总手续费', '总印花税', 
+                    '交易股票数', '最早交易日', '最后交易日']
+    for key in basic_metrics:
+        print(f"{key}: {trade_analysis[key]}")
+    
+    # 打印性能指标
+    print("\n性能指标:")
+    performance_metrics = [
+        '已实现盈亏', '浮动盈亏', '总盈亏', '总收益率', '年化收益率', 
+        '夏普比率', '胜率', '日均收益', '收益标准差', '最大单日盈利', 
+        '最大单日亏损', '盈亏比'
+    ]
+    for key in performance_metrics:
+        if isinstance(trade_analysis[key], float):
+            print(f"{key}: {trade_analysis[key]:.2f}")
+        else:
             print(f"{key}: {trade_analysis[key]}")
-        
-        # 打印性能指标
-        print("\n性能指标:")
-        performance_metrics = [
-            '已实现盈亏', '浮动盈亏', '总盈亏', '总收益率', '年化收益率', 
-            '夏普比率', '胜率', '日均收益', '收益标准差', '最大单日盈利', 
-            '最大单日亏损', '盈亏比'
-        ]
-        for key in performance_metrics:
-            if isinstance(trade_analysis[key], float):
-                print(f"{key}: {trade_analysis[key]:.2f}")
-            else:
-                print(f"{key}: {trade_analysis[key]}")
-        
-        # 打印每笔交易收益率
-        print("\n每笔交易收益明细:")
-        for trade in trade_analysis['交易收益明细']:
-            print(f"时间: {trade['交易时间']}, "
-                  f"股票: {trade['股票名称']}({trade['股票代码']}), "
-                  f"收益率: {trade['收益率']:.2f}%, "
-                  f"收益金额: {trade['收益金额']:.2f}")
-    else:
-        print("\n未获取到回测结果，请检查数据获取是否正常。")
+    
+    # 打印每笔交易收益率
+    print("\n每笔交易收益明细:")
+    for trade in trade_analysis['交易收益明细']:
+        print(f"时间: {trade['交易时间']}, "
+              f"股票: {trade['股票名称']}({trade['股票代码']}), "
+              f"收益率: {trade['收益率']:.2f}%, "
+              f"收益金额: {trade['收益金额']:.2f}")
+    
+    # 获取股票数据用于分析
+    stock_data = system.data_fetcher.batch_get_stock_data(
+        test_stocks, start_date, end_date
+    )
+    
+    # 分析交易表现
+    analysis_results = analyze_trades(trades_df, stock_data, 100000)  # 初始资金10万元
     
     # 添加可视化部分
     visualizer = Visualizer()
